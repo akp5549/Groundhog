@@ -161,3 +161,161 @@ plot_ordination(ps, pcoa_res, type = "samples", color = "Sample_Content") +
 ```
 
 # it works! Now onto relative abundance 
+
+# Here is phyla and genus level relative abundance plots and such
+```
+
+
+# -------------- relative abundance -------------------------
+
+# Function to calculate Top-N taxa per Sample_Content
+# =============================
+topN_relative_abundance <- function(ps, taxrank = "Genus", topN = 10) {
+  
+  # Collapse to taxonomic rank
+  ps.rank <- tax_glom(ps, taxrank = taxrank, NArm = FALSE)
+  
+  # Remove samples with zero counts
+  ps.rank <- prune_samples(sample_sums(ps.rank) > 0, ps.rank)
+  
+  # Transform to relative abundance
+  ps.rel <- transform_sample_counts(ps.rank, function(x) x / sum(x))
+  df <- psmelt(ps.rel)
+  
+  # Clean taxonomy
+  df[[taxrank]] <- as.character(df[[taxrank]])
+  df[[taxrank]][is.na(df[[taxrank]]) |
+                  grepl("^\\[.*\\]|Candidatus|Incertae Sedis|UCG|group|^[A-Z0-9_-]+$", df[[taxrank]])] <- "Unclassified"
+  
+  # Loop over Sample_Contents separately
+  out <- lapply(unique(df$Sample_Content), function(g) {
+    
+    df_g <- df  filter(Sample_Content == g)
+    
+    # Top N taxa per group (excluding Unclassified)
+    top_taxa <- df_g 
+      filter(.data[[taxrank]] != "Unclassified") 
+      group_by(.data[[taxrank]]) 
+      summarise(Total = sum(Abundance), .groups = "drop") 
+      slice_max(Total, n = topN) 
+      pull(.data[[taxrank]])
+    
+    # Assign Other / Unclassified
+    df_g <- df_g 
+      mutate(
+        Taxon_plot = case_when(
+          .data[[taxrank]] %in% top_taxa ~ .data[[taxrank]],
+          .data[[taxrank]] == "Unclassified" ~ "Unclassified",
+          TRUE ~ "Other"
+        )
+      )
+    
+    # Sum abundances per sample & enforce factor order
+    df_g <- df_g 
+      group_by(Sample, Sample_Content, Taxon_plot) 
+      summarise(Abundance = sum(Abundance), .groups = "drop") 
+      mutate(Taxon_plot = factor(Taxon_plot, levels = c(sort(top_taxa), "Other", "Unclassified")))
+    
+    df_g
+  })
+  
+  # Combine all groups
+  bind_rows(out)
+}
+
+# =============================
+# Run Top 10 analyses
+# =============================
+genus_rel  <- topN_relative_abundance(ps, taxrank = "Genus", topN = 10)
+phylum_rel <- topN_relative_abundance(ps, taxrank = "Phylum", topN = 10)
+
+
+# -----------------------------
+# Create consistent color palette
+# =============================
+create_taxon_colors <- function(df) {
+  all_taxa <- unique(df$Taxon_plot)
+  top_taxa <- setdiff(all_taxa, c("Other", "Unclassified"))
+  
+  # Use qualitative palette from RColorBrewer
+  n_top <- length(top_taxa)
+  if(n_top <= 12){
+    top_colors <- brewer.pal(n_top, "Set3")
+  } else {
+    top_colors <- colorRampPalette(brewer.pal(12, "Set3"))(n_top)
+  }
+  
+  taxon_colors <- c(
+    setNames(top_colors, top_taxa),
+    "Other" = "gray50",
+    "Unclassified" = "yellow"
+  )
+  
+  # Ensure factor levels match colors
+  df$Taxon_plot <- factor(df$Taxon_plot, levels = names(taxon_colors))
+  
+  list(df = df, taxon_colors = taxon_colors)
+}
+
+genus_pal <- create_taxon_colors(genus_rel)
+genus_rel <- genus_pal$df
+genus_colors <- genus_pal$taxon_colors
+
+phylum_pal <- create_taxon_colors(phylum_rel)
+phylum_rel <- phylum_pal$df
+phylum_colors <- phylum_pal$taxon_colors
+
+# =============================
+# Function to plot per Sample_Content
+# =============================
+plot_topN <- function(df, taxname = "Genus", colors) {
+  for (g in unique(df$Sample_Content)) {
+    
+    df_g <- df  filter(Sample_Content == g)
+    
+    p <- ggplot(df_g, aes(x = Sample, y = Abundance, fill = Taxon_plot)) +
+      geom_bar(stat = "identity") +
+      scale_fill_manual(values = colors) +
+      theme_bw() +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1),
+            panel.grid.major.x = element_blank()) +
+      labs(title = paste("Top 10", taxname, "-", g),
+           y = "Relative Abundance",
+           fill = taxname)
+    
+    print(p)
+  }
+}
+
+# =============================
+# Generate plots
+# =============================
+plot_topN(genus_rel, "Genus", genus_colors)
+plot_topN(phylum_rel, "Phylum", phylum_colors)
+
+# =============================
+# Save PDF of all plots
+# =============================
+pdf("Top10_relative_abundance_plots.pdf", width = 12, height = 8)
+plot_topN(genus_rel, "Genus", genus_colors)
+plot_topN(phylum_rel, "Phylum", phylum_colors)
+dev.off()
+
+
+# =============================
+# Save summary table (mean % + SD) by Sample_Content 
+# =============================
+genus_summary <- genus_rel 
+  group_by(Sample_Content, Taxon_plot) 
+  summarise(MeanPercent = mean(Abundance)*100,
+            SD = sd(Abundance)*100,
+            .groups = "drop") 
+  arrange(Sample_Content, desc(MeanPercent)) 
+  mutate(MeanPercent = round(MeanPercent,2),
+         SD = round(SD,2))
+
+write.csv(genus_summary, "Top10_Genus_mean_SD.csv", row.names = FALSE)
+
+# Optional: save as Excel
+writexl::write_xlsx(list(Genus_summary = genus_summary), "Top10_Genus_mean_SD.xlsx")
+```
