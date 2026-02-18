@@ -124,4 +124,40 @@ pairwise.wilcox.test(sample_data(ps)$Shannon,
 ```
 
 
+# trouble with microviz so we changed beta diversity section to:
+```
+# ------------ Beta diversity ------------
+# Bray-Curtis distance
+bray_dist <- phyloseq::distance(ps, method = "bray")
 
+# PCoA
+pcoa_res <- ordinate(ps, method = "PCoA", distance = bray_dist)
+
+# Plot
+plot_ordination(ps, pcoa_res, color = "Sample_Content") +
+  geom_point(size = 4, alpha = 0.7) +
+  theme_classic() +
+  scale_color_viridis_d() +
+  labs(title = "Bray-Curtis PCoA by Groundhog GI Region")
+```
+
+
+# but then we dont have ellipses over points, so we change to
+```
+# Bray-Curtis distance and PCoA
+bray_dist <- phyloseq::distance(ps, method = "bray")
+pcoa_res <- ordinate(ps, method = "PCoA", distance = bray_dist)
+
+# Convert sample_data to dataframe
+meta_df <- as.data.frame(sample_data(ps))
+
+# Plot with ellipses
+plot_ordination(ps, pcoa_res, type = "samples", color = "Sample_Content") +
+  geom_point(size = 4, alpha = 0.7) +
+  stat_ellipse(aes(group = Sample_Content, color = Sample_Content), linetype = 2, level = 0.95) +
+  theme_classic() +
+  scale_color_viridis_d() +
+  labs(title = "Bray-Curtis PCoA with Ellipses by GI Region")
+```
+
+# it works! Now onto relative abundance 
